@@ -896,9 +896,9 @@ def plot_traffic_t(flights_in_window, previous_clusters,previous_labels,cluster_
 
 
 if __name__ == "__main__":
-    # df_flights = read_data_v2("DeepFlow_Data_v00.02/InitialFlow/20230714_NW_SW_Axis_InitialFlw.so6")
+    df_flights = read_data_v2("DeepFlow_Data_v00.02/InitialFlow/20230714_NW_SW_Axis_InitialFlw.so6")
     # df_flights.to_pickle("my_dataframe.pkl")
-    df_flights = pd.read_pickle("my_dataframe14.pkl")
+    # df_flights = pd.read_pickle("my_dataframe14.pkl")
     # # Extract only the date (year-month-day)
     date_only = df_flights["timebase"].dt.date
     # Find the most frequent date
