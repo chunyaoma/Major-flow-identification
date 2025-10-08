@@ -115,7 +115,7 @@ def has_restricted_waypoints(waypoints):
     if first_prefix in prefix_set_2 and last_prefix in prefix_set_1 and first_in_region and last_in_region:
         return True  # Filter out this flight
 
-    return False
+    return True         # Should be False
 
 
 # Function to find flights within the next 4 hours of a given time t
@@ -602,7 +602,7 @@ def plot_sliding_window_traffic_basemap(df, step_seconds=1800, window_hours=4,ep
 
         current_time += timedelta(seconds=step_seconds)
 
-# Run the function using Basemap
-if __name__ == "__main__":
-    df_flights = fl2df("/Users/machunyao/Documents/DeepFlow/fl_sim/fl_mar/20230301_m1.so6.7z_json")
-    plot_sliding_window_traffic_basemap(df_flights)
+# # Run the function using Basemap
+# if __name__ == "__main__":
+#     df_flights = fl2df("/Users/machunyao/Documents/DeepFlow/fl_sim/fl_mar/20230301_m1.so6.7z_json")
+#     plot_sliding_window_traffic_basemap(df_flights)

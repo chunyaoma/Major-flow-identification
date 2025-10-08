@@ -32,7 +32,13 @@ from networkx.algorithms.tree.branchings import minimum_spanning_arborescence
 from scipy.cluster.hierarchy import dendrogram
 import cluster_threshold
 import matplotlib.dates as mdates
-
+from shapely.geometry import Point
+import re
+from typing import Dict, List, Tuple, Optional
+from shapely.geometry import Polygon, LinearRing, MultiPolygon
+from shapely.ops import unary_union
+# from FIRgeo import parse_gar, parse_sls, build_sector_geometries,ensure_fir_id_map,filter_covered_by_higher_alt
+from shapely.strtree import STRtree
 
 
 def generate_row_colors(n):
@@ -502,8 +508,9 @@ def applyonlineclustering(all_waypoints,previous_clusters,previous_labels,cluste
         # labels = apply_dbscan(all_waypoints, eps=dbscan_eps, min_samples=dbscan_min_samples)
         points = pd.DataFrame(all_waypoints, columns = ['lon', 'lat'])
         clustered_points = cluster_threshold.apply_dbscan(points)
-        refined_clusters0 = cluster_threshold.split_by_reclustering(clustered_points)
-        refined_clusters = cluster_threshold.reclustering(refined_clusters0)
+        refined_clusters = cluster_threshold.split_by_simplified_alpha_shape(clustered_points, alpha=1.8, tolerance_km=120, min_concave=1)
+        # refined_clusters0 = cluster_threshold.split_by_reclustering(clustered_points)
+        # refined_clusters = cluster_threshold.reclustering(refined_clusters0)
         # Organize clusters as {label: set(points)}
         labels = refined_clusters['cluster']
         current_clusters = defaultdict(set)
@@ -524,6 +531,85 @@ def applyonlineclustering(all_waypoints,previous_clusters,previous_labels,cluste
                 current_clusterscopy[new_key] = current_clusters.pop(old_key)  # Move values and remove old key
         
     return labels,current_clusterscopy, matched_clusters, cluster_colors
+
+
+# def applyonlineclusteringfir(all_waypoints, previous_clusters, previous_labels, cluster_colors):
+#     """
+#     Instead of clustering with DBSCAN, assign each waypoint to its FIR region.
+#     - all_waypoints: list of (lon, lat)
+#     - fir_geoms: dict {FIR_name: shapely Polygon or MultiPolygon}
+#     """
+#     GAR_PATH = "DeepFlow_Data_v00.03/Airblocks_2307.gar"
+#     SLS_PATH = "DeepFlow_Data_v00.03/sectors_2307.sls"
+#     SPC_PATH = "DeepFlow_Data_v00.03//DeepFlow_Airspace_CS_ES_2306.spc"
+
+#     blocks = parse_gar(GAR_PATH)
+#     sectors = parse_sls(SLS_PATH)
+#     sector_geoms = build_sector_geometries(blocks, sectors, None, 0, cs_spc_path=SPC_PATH,
+#         require_in_cs=True,)
+#     filtered_sector_geoms = filter_covered_by_higher_alt(
+#         sector_geoms=sector_geoms,
+#         sectors=sectors,
+#         blocks=blocks,
+#         coverage_buffer=1e-9,   # optional small buffer to avoid micro-gaps
+#     )
+#     fir_id_map = ensure_fir_id_map(filtered_sector_geoms)
+    
+#     # Build spatial index over FIR polygons
+#     geom_list, name_list = [], []
+#     for name, geom in filtered_sector_geoms.items():
+#         if hasattr(geom, "geoms"):  # MultiPolygon
+#             for g in geom.geoms:
+#                 if not g.is_empty:
+#                     geom_list.append(g)
+#                     name_list.append(name)
+#         else:
+#             if not geom.is_empty:
+#                 geom_list.append(geom)
+#                 name_list.append(name)
+
+#     idx = STRtree(geom_list) if geom_list else None
+#     id_lookup = {id(g): n for g, n in zip(geom_list, name_list)}  # fast geom->name
+
+#     new_clusters = {}
+#     if all_waypoints:
+#         # Convert to DataFrame
+#         points = pd.DataFrame(all_waypoints, columns=['lon', 'lat'])
+
+#         # Assign each point to an FIR
+#         # Numeric labels per waypoint
+#         labels: List[int] = []
+#         for (lon, lat) in all_waypoints:
+#             lab = -1
+#             if idx is not None:
+#                 pt = Point(lon, lat)
+#                 for i in idx.query(pt):  # i is the index of the geometry in geom_list
+#                     cand = geom_list[i]
+#                     if cand.contains(pt) or cand.touches(pt) or pt.within(cand):
+#                         fir_name = name_list[i]
+#                         lab = fir_id_map[fir_name]
+#                         break
+#             labels.append(lab)
+
+#         current_clusters = defaultdict(set)
+#         for i, label in enumerate(labels):
+#             if label != -1:  # Ignore noise
+#                 current_clusters[label].add(all_waypoints[i])
+#         # Compute cluster centers
+#         # Track cluster changes with max overlapping
+#         matched_clusters, new_clusters, disappeared_clusters = track_cluster_changes(previous_clusters, current_clusters, previous_labels)
+#         print(f"New clusters formed: {new_clusters}")
+#         print(f"Clusters disappeared: {disappeared_clusters}")
+#         # Assign consistent colors
+#         cluster_colors = assign_cluster_colors(matched_clusters, new_clusters, cluster_colors)
+#         # Rename keys
+#         current_clusterscopy = defaultdict(set)
+#         for old_key, new_key in matched_clusters.items():
+#             if old_key in current_clusters:
+#                 current_clusterscopy[new_key] = current_clusters.pop(old_key)  # Move values and remove old key
+        
+#     return labels,current_clusterscopy, matched_clusters, cluster_colors
+
 
 def merge_defaultdicts(d1, d2):
     merged = defaultdict(list)
@@ -581,6 +667,23 @@ def merge_overlapping_dict_values(data,score,minfc):
                         combined_values = combined_values - overlapflights
                         combined_score = combined_score*len(combined_values)/(len(combined_values)+len(overlapflights))
             i += 1  
+
+            
+            # if len(combined_values & v)>0.9*len(v) or len(combined_values & v)>=0.9*len(combined_keys):  # overlap found
+            #     lon1, lat1, lon2, lat2 = zip(*combined_keys)                 
+            #     start_point = lon1 + lat1
+            #     end_point = lon2 + lat2
+            #     d1 = geodesic(start_point, end_point).nautical
+            #     lon1, lat1, lon2, lat2 = zip(*[k])                
+            #     start_point = lon1 + lat1
+            #     end_point = lon2 + lat2
+            #     d2 = geodesic(start_point, end_point).nautical
+            #     if d1<d2:
+            #         combined_keys = [k]
+            #         combined_values = set(v)
+            #     items.pop(i)
+            # else:
+            #     i += 1
         if len(combined_values)>=minfc:
             merged.append((combined_keys, list(combined_values),combined_score))
             # merged_score
@@ -612,7 +715,7 @@ def extract_points_by_sequence(segment, lons, lats, cluster_center,flightcluster
     return path[start_idx:end_idx+1],start_idx,end_idx
 
 
-def plot_traffic_t(flights_in_window, previous_clusters,previous_labels,cluster_colors, epsilon=0.1, mfc = 15, mind2c = 500,maxd2c = 3000):
+def plot_traffic_t(flights_in_window, previous_clusters,previous_labels,cluster_colors, epsilon=0.1, mfc = 20, mind2c = 500,maxd2c = 3000):
     ########################################################################################################################process data     
     all_waypoints = []
     waypoint_indices = []  # Keep track of point indices for tracking clusters
@@ -630,7 +733,7 @@ def plot_traffic_t(flights_in_window, previous_clusters,previous_labels,cluster_
         alt = [wp["z"] for wp in waypoints]  # Altitude in meters
 
         # Filter waypoints within the desired region
-        filtered_coords = [(lo, la, wp["name"], wp["t"]) for lo, la, al, wp in zip(lon, lat, alt, waypoints) if -20 <= lo <= 30 and 26 <= la <= 66]
+        filtered_coords = [(lo, la, wp["name"], wp["t"]) for lo, la, al, wp in zip(lon, lat, alt, waypoints) if -20 <= lo <= 30 and 26 <= la <= 90]
         # Apply Douglas-Peucker simplification
         if len(filtered_coords) > 2:
             simplified_coords = douglas_peucker([(lo, la) for lo, la, _, _ in filtered_coords], epsilon)
@@ -654,9 +757,17 @@ def plot_traffic_t(flights_in_window, previous_clusters,previous_labels,cluster_
         ### labels: original cluster labels
         ### current_clusterscopy: updated cluster of original clustered results revised by previous clusters
         ### matched_clusters: x: y, x is the new label from the present clustering and y is the revised label after matching with previous ones
-        labels,current_clusterscopy, matched_clusters, cluster_colors = applyonlineclustering(all_waypoints,previous_clusters,previous_labels,cluster_colors)
+        # labels,current_clusterscopy, matched_clusters, cluster_colors = applyonlineclustering(all_waypoints,previous_clusters,previous_labels,cluster_colors)
+        labels,current_clusterscopy, matched_clusters, cluster_colors =  applyonlineclustering(all_waypoints, previous_clusters, previous_labels, cluster_colors)
+
         # Compute cluster centers
         cluster_centers = compute_cluster_centers(current_clusterscopy)    
+        fig, ax = plt.subplots(figsize=(12, 6))
+        m = Basemap(projection='cyl', llcrnrlon=-20, urcrnrlon=30, llcrnrlat=26, urcrnrlat=66, resolution='i', ax=ax)
+        m.drawcoastlines()
+        m.drawcountries()
+        m.drawparallels(np.arange(26, 66, 5), labels=[1, 0, 0, 0])
+        m.drawmeridians(np.arange(-20, 30, 5), labels=[0, 0, 0, 1])     
         # assign flight to clusters
         updated_labels = []
         for i, (point, label) in enumerate(zip(all_waypoints, labels)):
@@ -664,6 +775,8 @@ def plot_traffic_t(flights_in_window, previous_clusters,previous_labels,cluster_
             flight_id, waypoint_name = waypoint_indices[i]
             flight_clusters[flight_id].append(updated_label)
             updated_labels.append(updated_label)# ✅ Track cluster sequence per flight
+            color = cluster_colors.get(updated_label, "black") if updated_label != -1 else "gray"
+            m.scatter(point[0], point[1], color=color, s=10, alpha=0.8)
         # Find connections based on flights transitioning between clusters
         connection_counts, flight_routes = find_all_waypoint_connections(flight_clusters)   
         ########### get cluster ranking here (write a function)
@@ -877,122 +990,173 @@ def plot_traffic_t(flights_in_window, previous_clusters,previous_labels,cluster_
                       
             flow_of_flights_node = flow_of_flightsgo | flow_of_flightscome
             flowscore_node = flowscorego | flowscorecome
+            # for color, flights in flow_of_flights_node.items():
+            #     fig = plt.figure()
+            #     m = Basemap(projection='merc', llcrnrlon=-20, urcrnrlon=30, llcrnrlat=26, urcrnrlat=66, resolution='i')  # example bounds
+            #     m.drawcoastlines()
+            #     m.drawcountries()
+            #     m.drawmapboundary()
+            #     for flight in flights:
+            #         lon, lat = zip(*flight_waypoints[flight])
+            #         path = extract_points_by_sequence(color, lon, lat, cluster_centers,flight_clusters[flight])
+            #         if len(path)>0:
+            #             lon, lat = zip(*path)
+            #             x, y = m(lon, lat)
+            #             m.plot(x, y, linestyle='-', linewidth=1.5, color='black', alpha=0.2)  
             flow_of_flights_network =  flow_of_flights_network | flow_of_flights_node
             flowscore_network = flowscore_network | flowscore_node    
             
+   
                     
         flow_of_flights_network_merged = merge_overlapping_dict_values(flow_of_flights_network,flowscore_network,mfc)
         flow_timings = []
         row_colors = generate_row_colors(len(flow_of_flights_network_merged))
         figi = 0
         for (coord, flights,_),color in zip(flow_of_flights_network_merged,row_colors):
+            fig = plt.figure(figsize=(10, 5))
+            m = Basemap(projection='merc', llcrnrlon=-20, urcrnrlon=20, llcrnrlat=26, urcrnrlat=66, resolution='i')  # example bounds
+            m.drawcoastlines()
+            m.drawcountries()
+            m.drawmapboundary()
+            
+            # for label, (lon, lat) in cluster_centers.items():
+            #     color = cluster_colors.get(label, "black")
+            #     m.scatter(lon, lat, latlon = True, color=color, edgecolors="black", s=30, marker="X", linewidth=0.5, label=f"Cluster {label}")
+            for flightall,_ in flight_waypoints.items():
+                lon, lat, t = zip(*flight_waypoints[flightall])
+                x, y = m(lon, lat)
+                m.plot(x, y, linestyle='-', linewidth=0.5, color="black", alpha=0.1)
             for flight in flights:
                 lon, lat, t = zip(*flight_waypoints[flight])
                 path, ids, ide = extract_points_by_sequence(zip(*coord), lon, lat, cluster_centers,flight_clusters[flight])
+
+                if len(path)>0:
+                    lon, lat = zip(*path)
+                    x, y = m(lon, lat)
+                    m.plot(x, y, linestyle='-', linewidth=1.5, color="red", alpha=0.4)
+            m.scatter(coord[0][0], coord[0][1], latlon=True, color="green", s=100, alpha=0.8, zorder=4)
+            m.scatter(coord[0][2], coord[0][3], latlon=True, color="black", s=100, alpha=0.8, zorder=4)
+            filenamefig = f"mainflowplots/plot_{figi+1}.png"
+            plt.savefig(filenamefig, dpi=600, bbox_inches='tight')
+            figi = figi+1
         previous_clusters = current_clusterscopy.copy()
         previous_labels = matched_clusters.copy()
 
     return previous_clusters, previous_labels, cluster_colors, flow_of_flights_network_merged
 
 
-if __name__ == "__main__":
-    df_flights = read_data_v2("DeepFlow_Data_v00.02/InitialFlow/20230714_NW_SW_Axis_InitialFlw.so6")
-    # df_flights.to_pickle("my_dataframe.pkl")
-    # df_flights = pd.read_pickle("my_dataframe14.pkl")
-    # # Extract only the date (year-month-day)
-    date_only = df_flights["timebase"].dt.date
-    # Find the most frequent date
-    most_common_date = date_only.value_counts().idxmax()
-    # Convert to datetime (with time = 00:00:00)
-    most_common_datetime = pd.to_datetime(most_common_date)
-    t0 = most_common_datetime #+timedelta(hours=11)
+# # Run the function using Basemap
+# # Run the function using Basemap
+# # df_flights = fl2df("/Users/machunyao/Documents/DeepFlow/fl_sim/fl_mar/20230301_m1.so6.7z_json")
+# # df_flights = read_data_v2("/Users/machunyao/Documents/DeepFlow/DeepFlow_Data_v00.02/InitialFlow/20230714_NW_SW_Axis_InitialFlw.so6")
+# # df_flights.to_pickle("my_dataframe14.pkl")
+# df_flights = pd.read_pickle("my_dataframe19.pkl")
+# # # Extract only the date (year-month-day)
+# date_only = df_flights["timebase"].dt.date
+# # Find the most frequent date
+# most_common_date = date_only.value_counts().idxmax()
+# # Convert to datetime (with time = 00:00:00)
+# most_common_datetime = pd.to_datetime(most_common_date)
+# t0 = most_common_datetime #+timedelta(hours=11)
 
-    previous_clusters = {}
-    cluster_colors = {}
-    previous_labels = {}  # Stores label assignments across frames
-    window_hours = 24
-    current_time = t0
 
-    flights_in_window = find_flights_within_next_n_hours(df_flights,current_time,window_hours)
-    previous_clusters, previous_labels, cluster_colors, flow = plot_traffic_t(flights_in_window,previous_clusters,previous_labels,cluster_colors)
-    flowodt = []
-    flow_length = []
-    flow_counts = []
-    for coord, flights, _ in flow:
-        fodts = []    
-        for flight in flights:
-            matched_flight = flights_in_window[flights_in_window["callsign"] == flight]
-            waypoints = matched_flight.iloc[0]["waypoints"]
-            lon = rad_to_deg([wp["x"] for wp in waypoints])
-            lat = rad_to_deg([wp["y"] for wp in waypoints])
-            ts = [wp["t"] for wp in waypoints]
-            all_coords = list(zip(lat, lon))  # geodesic expects (lat, lon)
-            lon1, lat1, lon2, lat2 = zip(*coord)
-            # Target coordinate pairs
-            target1 = (lat1, lon1)
-            target2 = (lat2, lon2)
-            target1 = tuple(map(float, np.ravel(target1)))
-            target2 = tuple(map(float, np.ravel(target2)))
-            distflow = geodesic(target1, target2)
+# df_flights = read_data_v2("/Users/machunyao/Documents/DeepFlow/DeepFlow_Data_v00.03/general_initial_flow_NW_SW_Axis.so6")
+# df_flights.to_pickle("my_dataframe.pkl")
+df_flights = pd.read_pickle("my_dataframe.pkl")
 
-            # Find index with minimum geodesic distance to target1
-            dist1_list = [geodesic(target1, pt).nautical for pt in all_coords]
-            idx1 = int(np.argmin(dist1_list))
+date = "2023-07-20"
+day_start = pd.to_datetime(date)
+day_end = day_start + pd.Timedelta(days=1)
+# Filter the DataFrame for the specified date range
+df_flights = df_flights[(df_flights["timebase"] >= day_start) & (df_flights["timebase"] < day_end)]
 
-            # Find index with minimum geodesic distance to target2
-            dist2_list = [geodesic(target2, pt).nautical for pt in all_coords]
-            idx2 = int(np.argmin(dist2_list))
-            info = {
-                "FlightID": flight,
-                "st": ts[idx1],
-                "et": ts[idx2],
-                "sid": idx1,
-                "eid": idx2,
-                "waypoints": waypoints
-                }
-            fodts.append(info)
-        flow_length.append(distflow)
-        flow_counts.append(len(flights))
-        flowodt.append({
-            "OD": coord,
-            "info": fodts
-            })
-    df_flowodt = pd.DataFrame(flowodt)
-    df_flowodt.to_pickle("df_flow.pkl")
-    # allcounts = []
-    # figi = 0
-    # for _, flowi in df_flowodt.iterrows():
-    #     1
-    #     coord = flowi["OD"]
-    #     infoi = flowi["info"]
-    #     ets = [wp["et"] for wp in infoi]
-    #     sts = [wp["st"] for wp in infoi]
-    #     time_points = list(range(round(min(sts)), round(max(ets)) + 1, 60))
-    #     counts = []
-    #     for t in time_points:
-    #         count = sum(st <= t <= et for st, et in zip(sts, ets))
-    #         counts.append((t, count))
-    #     allcounts.append(counts)
-    #     ts, cs = zip(*counts)
-    #     ts_datetime = pd.to_datetime(ts, unit='s')
-    #     plt.figure(figsize=(4, 5))
-    #     plt.plot(ts_datetime, cs, marker='o', linestyle='-')
-    #     plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%H'))
-    #     plt.xlabel("Time",fontsize=12)
-    #     plt.ylabel("#Flights in flow",fontsize=12)
-    #     plt.grid(True)
-    #     filenamefig = f"mainflowplots/count_{figi+1}.png"
-    #     figi = figi+1
-    #     plt.savefig(filenamefig, dpi=600, bbox_inches='tight')
-    #     # plt.tight_layout()
-    #     # plt.show()
-    # allcounts[1]
-    # counts = flow_counts
-    # lengths = [d.km for d in flow_length]
-    # total_length = sum(c * l for c, l in zip(counts, lengths))
-    # total_count = sum(counts)
+print(f"{df_flights['timebase'].min()} to {df_flights['timebase'].max()} with {len(df_flights)} flights")
 
-    # average_length = total_length / total_count
+previous_clusters = {}
+cluster_colors = {}
+previous_labels = {}  # Stores label assignments across frames
+window_hours = 24
+current_time = day_start
 
+flights_in_window = find_flights_within_next_n_hours(df_flights,current_time,window_hours)
+previous_clusters, previous_labels, cluster_colors, flow = plot_traffic_t(flights_in_window,previous_clusters,previous_labels,cluster_colors)
+flowodt = []
+flow_length = []
+flow_counts = []
+for coord, flights, _ in flow:
+    fodts = []    
+    for flight in flights:
+        matched_flight = flights_in_window[flights_in_window["callsign"] == flight]
+        waypoints = matched_flight.iloc[0]["waypoints"]
+        lon = rad_to_deg([wp["x"] for wp in waypoints])
+        lat = rad_to_deg([wp["y"] for wp in waypoints])
+        ts = [wp["t"] for wp in waypoints]
+        all_coords = list(zip(lat, lon))  # geodesic expects (lat, lon)
+        lon1, lat1, lon2, lat2 = zip(*coord)
+        # Target coordinate pairs
+        target1 = (lat1, lon1)
+        target2 = (lat2, lon2)
+        target1 = tuple(map(float, np.ravel(target1)))
+        target2 = tuple(map(float, np.ravel(target2)))
+        distflow = geodesic(target1, target2)
+
+        # Find index with minimum geodesic distance to target1
+        dist1_list = [geodesic(target1, pt).nautical for pt in all_coords]
+        idx1 = int(np.argmin(dist1_list))
+
+        # Find index with minimum geodesic distance to target2
+        dist2_list = [geodesic(target2, pt).nautical for pt in all_coords]
+        idx2 = int(np.argmin(dist2_list))
+        info = {
+            "FlightID": flight,
+            "st": ts[idx1],
+            "et": ts[idx2],
+            "sid": idx1,
+            "eid": idx2,
+            "waypoints": waypoints
+            }
+        fodts.append(info)
+    flow_length.append(distflow)
+    flow_counts.append(len(flights))
+    flowodt.append({
+        "OD": coord,
+        "info": fodts
+        })
+df_flowodt = pd.DataFrame(flowodt)
+df_flowodt.to_pickle("df_flow.pkl")
+# allcounts = []
+# figi = 0
+# for _, flowi in df_flowodt.iterrows():
+#     1
+#     coord = flowi["OD"]
+#     infoi = flowi["info"]
+#     ets = [wp["et"] for wp in infoi]
+#     sts = [wp["st"] for wp in infoi]
+#     time_points = list(range(round(min(sts)), round(max(ets)) + 1, 60))
+#     counts = []
+#     for t in time_points:
+#         count = sum(st <= t <= et for st, et in zip(sts, ets))
+#         counts.append((t, count))
+#     allcounts.append(counts)
+#     ts, cs = zip(*counts)
+#     ts_datetime = pd.to_datetime(ts, unit='s')
+#     plt.figure(figsize=(4, 5))
+#     plt.plot(ts_datetime, cs, marker='o', linestyle='-')
+#     plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%H'))
+#     plt.xlabel("Time",fontsize=12)
+#     plt.ylabel("#Flights in flow",fontsize=12)
+#     plt.grid(True)
+#     filenamefig = f"mainflowplots/count_{figi+1}.png"
+#     figi = figi+1
+#     plt.savefig(filenamefig, dpi=600, bbox_inches='tight')
+#     # plt.tight_layout()
+#     # plt.show()
+# allcounts[1]
+# counts = flow_counts
+# lengths = [d.km for d in flow_length]
+# total_length = sum(c * l for c, l in zip(counts, lengths))
+# total_count = sum(counts)
+
+# average_length = total_length / total_count
         
     

@@ -7,7 +7,6 @@ import hdbscan
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import pyproj
-from sklearn.cluster import DBSCAN
 
 from IPython.display import display
 
@@ -24,7 +23,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 
-# Defining functions for clustering and shape processing
+## Defining functions for clustering and shape processing
 def apply_dbscan(points, min_cluster_size=12, min_samples=4, cluster_selection_epsilon=0.007, metric = 'haversine'):
     """
     Apply HDBSCAN clustering to the given points.
@@ -55,6 +54,13 @@ def apply_dbscan(points, min_cluster_size=12, min_samples=4, cluster_selection_e
 
 
 def alpha_shape(points, alpha):
+    """
+    Computes the alpha shape of a set of points.
+    :param points: List of (lon, lat) tuples or a similar 2D array-like structure.
+    :param alpha: Alpha parameter for the alpha shape; models how "tight" the shape is.
+
+    :return: A Shapely polygon representing the alpha shape.
+    """
     if len(points) < 4:
         return MultiPoint(list(points)).convex_hull
     coords = np.array(points)
@@ -88,6 +94,13 @@ def alpha_shape(points, alpha):
 
 
 def count_concave_vertices(polygon, cross_threshold=1e-8):
+    """
+    Counts the number of concave vertices in a polygon.
+    :param polygon: A Shapely polygon object.
+    :param cross_threshold: Threshold for the cross product to consider a vertex concave.
+
+    :return: Number of concave vertices in the polygon.
+    """
     # Returns the number of concave vertices in a polygon (cyclic, CCW)
     coords = list(polygon.exterior.coords)
     n = len(coords)
@@ -114,6 +127,14 @@ def count_concave_vertices(polygon, cross_threshold=1e-8):
 
 
 def simplify_shape_km(shape, cluster_points, tolerance_km):
+    """
+    Simplifies a Shapely polygon using the Douglas-Peucker algorithm. 
+    :param shape: A Shapely polygon object to be simplified.
+    :param cluster_points: DataFrame with 'lon' and 'lat' columns representing latitude and longitude in deg.
+    :param tolerance_km: Tolerance in kilometers for simplification.
+
+    :return: A simplified Shapely polygon object.
+    """
     # 1. Find centroid for local projection
     lon0 = cluster_points['lon'].mean()
     lat0 = cluster_points['lat'].mean()
@@ -132,7 +153,7 @@ def simplify_shape_km(shape, cluster_points, tolerance_km):
     return simple_shape
 
 
-def split_by_simplified_alpha_shape(points_df, alpha=2, tolerance_km=120, min_concave=1):
+def split_by_simplified_alpha_shape(points_df, alpha=2, tolerance_km=120, min_size=1000, min_concave=1):
     """
     For each cluster, smooth the alpha shape using Douglas-Peucker, count concave vertices,
     and split using KMeans with k = n_concave + 1.
@@ -151,7 +172,7 @@ def split_by_simplified_alpha_shape(points_df, alpha=2, tolerance_km=120, min_co
             # Simplify the shape
             simple_shape = simplify_shape_km(shape, cluster_points, tolerance_km = tolerance_km)
             n_concave = count_concave_vertices(simple_shape)
-            if n_concave >= min_concave and len(cluster_points) > 1000:
+            if n_concave >= min_concave and len(cluster_points) > min_size:
                 k = n_concave + 1
                 if k < 2 or k >= len(cluster_points):
                     continue  # Skip if k is not valid
@@ -161,73 +182,6 @@ def split_by_simplified_alpha_shape(points_df, alpha=2, tolerance_km=120, min_co
                 next_cluster += k
     return df
 
-
-
-def split_by_reclustering(points_df):
-    """
-    For each cluster, smooth the alpha shape using Douglas-Peucker, count concave vertices,
-    and split using KMeans with k = n_concave + 1.
-    """
-    df = points_df.copy()
-    next_cluster = df['cluster'].max() + 1
-    unique_clusters = df['cluster'].unique()
-    unique_clusters = unique_clusters[unique_clusters != -1]
-    for cluster_id in unique_clusters:
-        cluster_points = df[df['cluster'] == cluster_id]
-        if len(cluster_points) < 4:
-            continue
-        coords = cluster_points[['lon', 'lat']].values
-        if len(cluster_points) > 800:
-            clusterer = hdbscan.HDBSCAN(
-                min_cluster_size=150, 
-                min_samples=30, 
-                cluster_selection_epsilon=0.005,
-                metric = 'haversine'
-                )
-            
-            # sub_labels = clusterer.fit_predict(coords)
-            sub_labels = clusterer.fit_predict(np.radians(cluster_points[['lon', 'lat']]))
-            k = np.max(sub_labels)
-            df.loc[cluster_points.index, "cluster"] = [
-                -1 if lbl == -1 else lbl + next_cluster
-                for lbl in sub_labels
-            ]
-            # noise_points = cluster_points[sub_labels == -1]
-
-            # plt.figure(figsize=(8,6))
-            # plt.scatter(cluster_points["lon"], cluster_points["lat"], c="lightgray", s=20, label="All points")
-            # plt.scatter(noise_points["lon"], noise_points["lat"], c="red", s=30, label="Noise (-1)")
-
-            # plt.xlabel("Longitude")
-            # plt.ylabel("Latitude")
-            # plt.title("Noise Points (Cluster = -1)")
-            # plt.legend()
-            # plt.grid(True)
-            # plt.show()
-            next_cluster += k
-    return df
-def reclustering(points_df):
-    """
-    For each cluster, smooth the alpha shape using Douglas-Peucker, count concave vertices,
-    and split using KMeans with k = n_concave + 1.
-    """
-    df = points_df.copy()
-    next_cluster = df['cluster'].max() + 1
-    unique_clusters = df['cluster'].unique()
-    unique_clusters = unique_clusters[unique_clusters == -1]
-    for cluster_id in unique_clusters:
-        cluster_points = df[df['cluster'] == cluster_id]
-        
-        db = DBSCAN(eps=0.007, min_samples = 3, metric='haversine')
-        sub_labels = db.fit_predict(np.radians(cluster_points[['lon', 'lat']]))
-        k = np.max(sub_labels)
-        df.loc[cluster_points.index, "cluster"] = [
-            -1 if lbl == -1 else lbl + next_cluster
-            for lbl in sub_labels
-        ]
-
-        next_cluster += k
-    return df
 
 def plot_clusters(refined_clusters, filepath = None, show = 1):
     """
@@ -300,15 +254,14 @@ def plot_clusters(refined_clusters, filepath = None, show = 1):
 
 
 
-## Demonstration of the developed methods
-if __name__ == "__main__":
-    with open('/Users/atmri-mac-217/Desktop/Python Documents/DeepFlow/data/crida_cloud/points.pkl', 'rb') as f:
-        points = pickle.load(f)
-    points = pd.DataFrame(points, columns = ['lon', 'lat'])
+# ## Demonstration of the developed methods
+# with open('/Users/atmri-mac-217/Desktop/Python Documents/DeepFlow/data/crida_cloud/points.pkl', 'rb') as f:
+#     points = pickle.load(f)
+# points = pd.DataFrame(points, columns = ['lon', 'lat'])
 
-    clustered_points = apply_dbscan(points)
-    refined_clusters = split_by_simplified_alpha_shape(clustered_points, alpha = 2, tolerance_km = 120, min_concave=1)
+# clustered_points = apply_dbscan(points)
+# refined_clusters = split_by_simplified_alpha_shape(clustered_points, alpha = 2, tolerance_km = 160, min_concave=1)
 
-    plot_clusters(refined_clusters)
+# plot_clusters(refined_clusters)
 
 

@@ -80,7 +80,7 @@ def hhmmss_to_timedelta(val):
     return timedelta(hours=h, minutes=m, seconds=s)
 def read_data_v2(filename):
     columns = ["SegmentID", "Origin", "Destination", "Time1", "Time2",
-            "FL_begin", "FL_end", "Status", "Date_begin", "Date_end",
+            "FL_begin", "FL_end", "Status", "Callsign", "Date_begin", "Date_end",
             "Lat_begin", "Lon_begin", "Lat_end", "Lon_end",
             "FlightID", "Sequence", "SegmentLength", "SegmentParity"]
 
@@ -105,7 +105,7 @@ def read_data_v2(filename):
     df['Timestamp1'] = df.apply(lambda row: row['Date_begin'] + hhmmss_to_timedelta(row['Time1']), axis=1)
     df['Timestamp2'] = df.apply(lambda row: row['Date_end'] + hhmmss_to_timedelta(row['Time2']), axis=1)
 
-    filtered_df = df[df['FlightID'] == 263264937]
+    # filtered_df = df[df['FlightID'] == 263264937]
 
         
     df[['waypoint1', 'waypoint2']] = df["SegmentID"].str.split("_", expand = True)
@@ -150,7 +150,7 @@ def read_data_v2(filename):
     df_flights["callsign"] = df_flights["id"]
     return df_flights
     
-# Run the function using Basemap
-if __name__ == "__main__":    
-    filename = "DeepFlow_Data_v00.03/20230714_NW_SW_Axis_InitialFlw.so6"
-    df_flights = read_data_v2(filename)
+# # Run the function using Basemap
+# if __name__ == "__main__":    
+#     filename = "DeepFlow_Data_v00.03/20230714_NW_SW_Axis_InitialFlw.so6"
+#     df_flights = read_data_v2(filename)
