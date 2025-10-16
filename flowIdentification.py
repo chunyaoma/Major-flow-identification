@@ -1060,9 +1060,9 @@ def plot_traffic_t(flights_in_window, previous_clusters,previous_labels,cluster_
 # t0 = most_common_datetime #+timedelta(hours=11)
 
 
-# df_flights = read_data_v2("/Users/machunyao/Documents/DeepFlow/DeepFlow_Data_v00.03/general_initial_flow_NW_SW_Axis.so6")
+df_flights = read_data_v2("/Users/machunyao/Documents/DeepFlow/DeepFlow_Data_v00.03/general_initial_flow_NW_SW_Axis.so6")
 # df_flights.to_pickle("my_dataframe.pkl")
-df_flights = pd.read_pickle("my_dataframe.pkl")
+# df_flights = pd.read_pickle("my_dataframe.pkl")
 
 date = "2023-07-20"
 day_start = pd.to_datetime(date)
